@@ -1,0 +1,262 @@
+import numpy as np
+import pandas as pd
+import tensorflow as tf
+from tensorflow.keras import layers, models, callbacks
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
+from sklearn.preprocessing import StandardScaler
+import matplotlib.pyplot as plt
+import os
+import math
+import psutil  # For CPU and memory usage tracking
+import time
+
+# Define save path for charts and CSV files
+save_path = r"H:\articals\acstics paper\code\save\AANN-10layers"
+if not os.path.exists(save_path):
+    os.makedirs(save_path)
+
+# Set Times New Roman font for all plots
+plt.rcParams["font.family"] = "Palatino Linotype"
+
+# Load and process data
+file_path = r"G:\academic\phd thesis\CDNN paper\chatic data\data.csv"
+data = pd.read_csv(file_path)
+data = data.apply(pd.to_numeric, errors='coerce')
+data.fillna(data.mean(), inplace=True)
+
+# Separate features and targets
+features = data[['X-Size', 'Y-Size', 'Volume', 'Face-Area-1', 'Face-Area-2', 'Face-Area-3',
+                 'Face-Area-4', 'Face-Area-5', 'Face-Area-6', 'Rec-X', 'Rec-Y', 'Rec-Z',
+                 'Src-X', 'Src-Y', 'Src-Z', 'X0', 'Y0', 'Z0', 'X1', 'Y1', 'Z1', 'Vec-L']]
+targets = data[['62.5 Hz', '125 Hz', '250 Hz', '500 Hz', '1K Htz', '2K Hz', '4K Hz', '8K Hz']]
+
+X_train, X_test, y_train, y_test = train_test_split(features, targets, test_size=0.2, random_state=42)
+
+scaler = StandardScaler()
+X_train_scaled = scaler.fit_transform(X_train)
+X_test_scaled = scaler.transform(X_test)
+
+target_scaler = StandardScaler()
+y_train_scaled = target_scaler.fit_transform(y_train)
+y_test_scaled = target_scaler.transform(y_test)
+
+# Chaotic Activation Function
+def chaotic_pattern(x, r=3.9):
+    return r * x * (1 - x)
+
+# Chaotic Memory Cell Layer
+class ChaoticMemoryCell(layers.Layer):
+    def __init__(self, units, memory_type='position', r=3.9, **kwargs):
+        super(ChaoticMemoryCell, self).__init__(**kwargs)
+        self.units = units
+        self.memory_type = memory_type
+        self.r = r
+        self.state = None
+
+    def build(self, input_shape):
+        self.state = self.add_weight(shape=(self.units,), initializer='random_normal', trainable=False)
+
+    def call(self, inputs):
+        chaotic_update = chaotic_pattern(inputs, self.r)
+        if self.memory_type == 'position':
+            updated_state = 0.7 * chaotic_update + 0.3 * self.state
+        elif self.memory_type == 'velocity':
+            updated_state = 0.5 * chaotic_update + 0.5 * self.state
+        else:
+            updated_state = chaotic_update
+        self.state.assign(tf.reduce_mean(updated_state, axis=0))
+        return updated_state
+
+# Chaotic Plasticity Layer
+class ChaoticPlasticityLayer(layers.Layer):
+    def __init__(self, units, r=3.9, **kwargs):
+        super(ChaoticPlasticityLayer, self).__init__(**kwargs)
+        self.units = units
+        self.r = r
+
+    def build(self, input_shape):
+        self.w = self.add_weight(shape=(input_shape[-1], self.units), initializer='random_normal', trainable=True)
+        self.b = self.add_weight(shape=(self.units,), initializer='zeros', trainable=True)
+        self.chaotic_factor = self.add_weight(shape=(self.units,), initializer='random_normal', trainable=False)
+
+    def call(self, inputs):
+        z = tf.matmul(inputs, self.w) + self.b
+        plasticity_update = chaotic_pattern(self.chaotic_factor, self.r)
+        updated_w = self.w + 0.01 * plasticity_update
+        self.w.assign(updated_w)
+        return z
+
+# Chaotic Synapse Layer
+class ChaoticSynapseLayer(layers.Layer):
+    def __init__(self, units, r=3.9, **kwargs):
+        super(ChaoticSynapseLayer, self).__init__(**kwargs)
+        self.units = units
+        self.r = r
+
+    def build(self, input_shape):
+        self.w = self.add_weight(shape=(input_shape[-1], self.units), initializer='random_normal', trainable=True)
+        self.chaotic_synapse_factor = self.add_weight(shape=(self.units,), initializer='random_uniform', trainable=False)
+
+    def call(self, inputs):
+        z = tf.matmul(inputs, self.w)
+        synapse_update = chaotic_pattern(self.chaotic_synapse_factor, self.r)
+        updated_w = self.w + synapse_update * 0.001
+        self.w.assign(updated_w)
+        return z
+
+    # Learning Rate Schedule with a Lower Initial Learning Rate
+class ChaoticLearningRateSchedule(tf.keras.optimizers.schedules.LearningRateSchedule):
+    def __init__(self, initial_lr=0.0003, r=3.9):
+        super().__init__()
+        self.initial_lr = initial_lr
+        self.r = r
+        self.chaotic_factor = tf.Variable(0.5)
+
+    def __call__(self, step):
+        chaotic_lr = self.initial_lr * chaotic_pattern(self.chaotic_factor, self.r)
+        chaotic_lr = tf.maximum(chaotic_lr, 1e-6)
+        return chaotic_lr
+    
+# Full Neural Network Architecture with 4 layers
+def create_full_chaotic_nn(input_shape, output_shape):
+    inputs = layers.Input(shape=input_shape)
+
+    # First layer: Chaotic Memory Cell
+    x = layers.Dense(1024)(inputs)
+    x = ChaoticMemoryCell(units=1024, r=3.8)(x)
+    
+    # Second layer: Chaotic Plasticity
+    x = ChaoticPlasticityLayer(1024, r=3.85)(x)
+    x = layers.LeakyReLU()(x)
+    x = layers.BatchNormalization()(x)
+    x = layers.Dropout(0.2)(x)
+    
+    # Third layer: Chaotic Synapse
+    x = ChaoticSynapseLayer(512, r=3.75)(x)
+    x = layers.LeakyReLU()(x)
+    x = layers.BatchNormalization()(x)
+    x = layers.Dropout(0.2)(x)
+
+    # Final output layer
+    outputs = layers.Dense(output_shape, activation='linear')(x)
+
+    chaotic_lr_schedule = ChaoticLearningRateSchedule(initial_lr=0.0005)
+    optimizer = tf.keras.optimizers.Adam(learning_rate=chaotic_lr_schedule)
+
+    model = models.Model(inputs=inputs, outputs=outputs)
+    model.compile(optimizer=optimizer, loss='mae', metrics=['mae'])
+    return model
+
+# Create the model with input/output shapes
+input_shape = (X_train_scaled.shape[1],)
+output_shape = y_train.shape[1]
+chaotic_nn_model = create_full_chaotic_nn(input_shape, output_shape)
+
+# Early stopping callback
+early_stopping = callbacks.EarlyStopping(monitor='val_loss', patience=30, restore_best_weights=True)
+
+# Tracking computational power and time
+start_time = time.time()
+cpu_percent_start = psutil.cpu_percent(interval=None)
+memory_start = psutil.virtual_memory().used / (1024 ** 3)  # Convert to GB
+
+# Train the model
+history = chaotic_nn_model.fit(X_train_scaled, y_train_scaled, epochs=500, batch_size=32, validation_split=0.2)
+
+# End monitoring RAM and CPU usage
+cpu_percent_end = psutil.cpu_percent(interval=None)
+memory_end = psutil.virtual_memory().used / (1024 ** 3)  # Convert to GB
+end_time = time.time()
+total_time = end_time - start_time
+cpu_usage = cpu_percent_end - cpu_percent_start
+memory_usage = memory_end - memory_start
+
+# Evaluate the model on the test data
+y_pred_scaled = chaotic_nn_model.predict(X_test_scaled)
+y_pred_rescaled = target_scaler.inverse_transform(y_pred_scaled)
+
+# Calculate Metrics
+test_loss, test_mae = chaotic_nn_model.evaluate(X_test_scaled, y_test_scaled)
+r2 = r2_score(y_test, y_pred_rescaled)
+overall_rmse = math.sqrt(mean_squared_error(y_test, y_pred_rescaled))
+
+# Calculate Adjusted R²
+n = X_test.shape[0]  # Number of samples
+p = X_test.shape[1]  # Number of features
+r2_adj = 1 - ((1 - r2) * (n - 1) / (n - p - 1))
+
+# Calculate RMSLE
+y_test_np = y_test.to_numpy()  # Convert y_test to numpy
+y_pred_rescaled_np = y_pred_rescaled  # y_pred_rescaled is already a numpy array
+overall_rmsle = np.sqrt(np.mean((np.log1p(y_test_np) - np.log1p(y_pred_rescaled_np)) ** 2))
+
+# Print the results
+print(f"Model Type: Chaotic Neural Network (Chaotic NN)")
+print(f"Number of Layers: {len(chaotic_nn_model.layers)}")  # Number of layers in the model
+print(f"Learning Rate: {chaotic_nn_model.optimizer.learning_rate.numpy()}")
+print(f"Batch Size: 32")
+print(f"Epochs: 500")
+print(f"Total Training Time (s): {total_time:.2f}")
+print(f"Overall R²: {r2:.4f}")
+print(f"Overall Adjusted R²: {r2_adj:.4f}")
+print(f"Overall RMSE: {overall_rmse:.4f}")
+print(f"Overall RMSLE: {overall_rmsle:.4f}")
+
+# Save metrics to CSV
+metrics_data = {
+    'Metric': ['Test Loss', 'Test MAE', 'R² Score', 'RMSE'],
+    'Value': [test_loss, test_mae, r2, overall_rmse]
+}
+metrics_df = pd.DataFrame(metrics_data)
+metrics_df.to_csv(os.path.join(save_path, 'chaotic_nn_metrics.csv'), index=False)
+
+# Overall Model Metrics
+overall_r2 = r2_score(y_test, y_pred_rescaled, multioutput='uniform_average')
+overall_rmse = math.sqrt(mean_squared_error(y_test, y_pred_rescaled))
+
+# Save overall metrics to CSV
+overall_metrics_data = {
+    'Overall R²': [overall_r2],
+    'Overall RMSE': [overall_rmse]
+}
+overall_metrics_df = pd.DataFrame(overall_metrics_data)
+overall_metrics_df.to_csv(os.path.join(save_path, 'chaotic_nn_overall_metrics.csv'), index=False)
+
+# Training and validation loss/MAE history to CSV
+history_data = {
+    'Epoch': list(range(1, len(history.history['loss']) + 1)),
+    'Training Loss': history.history['loss'],
+    'Validation Loss': history.history['val_loss'],
+    'Training MAE': history.history['mae'],
+    'Validation MAE': history.history['val_mae']
+}
+history_df = pd.DataFrame(history_data)
+history_df.to_csv(os.path.join(save_path, 'chaotic_nn_training_history.csv'), index=False)
+
+# Plot training & validation loss over epochs
+plt.figure(figsize=(10, 6), dpi=300)
+plt.plot(history.history['loss'], label='Training Loss')
+plt.plot(history.history['val_loss'], label='Validation Loss')
+plt.title('Training and Validation Loss (Chaotic Neural Network)', fontsize=14)
+plt.xlabel('Epochs', fontsize=12)
+plt.ylabel('Loss (MAE)', fontsize=12)
+plt.legend()
+plt.tight_layout()
+plt.savefig(os.path.join(save_path, 'chaotic_nn_loss.png'), dpi=300)
+plt.show()
+
+# Plot residuals (Error between actual and predicted values)
+residuals = y_test - y_pred_rescaled
+plt.figure(figsize=(20, 10), dpi=300)
+for i, target in enumerate(targets.columns):
+    plt.subplot(2, 4, i + 1)
+    plt.scatter(y_pred_rescaled[:, i], residuals.iloc[:, i], alpha=0.5)
+    plt.axhline(0, color='red', linestyle='--')
+    plt.title(f'Residuals: {target}', fontsize=10)
+    plt.xlabel('Predicted', fontsize=8)
+    plt.ylabel('Residuals', fontsize=8)
+
+plt.tight_layout()
+plt.savefig(os.path.join(save_path, 'chaotic_nn_residuals.png'), dpi=300)
+plt.show()
